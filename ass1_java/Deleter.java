@@ -1,11 +1,11 @@
 package ass1_java;
 
-public class Deleter extends ConcurrentArrayOperator implements Runnable {
+public class Deleter extends ConcurrentSetOperator {
 
   private Integer x;
 
-  public Deleter(ConcurrentArray array, Integer x) {
-    super(array)
+  public Deleter(ConcurrentSet array, Integer x) {
+    super(array);
     this.x = x;
   }
 

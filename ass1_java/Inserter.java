@@ -1,10 +1,10 @@
 package ass1_java;
 
-public class Inserter extends ConcurrentArrayOperator implements Runnable {
+public class Inserter extends ConcurrentSetOperator {
 
   private Integer x;
 
-  public Inserter(ConcurrentArray array, Integer x) {
+  public Inserter(ConcurrentSet array, Integer x) {
     super(array);
     this.x = x;
   }

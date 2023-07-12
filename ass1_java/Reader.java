@@ -1,10 +1,10 @@
 package ass1_java;
 
-public class Reader extends ConcurrentArrayOperator implements Runnable {
+public class Reader extends ConcurrentSetOperator {
 
   private Integer x;
 
-  public Reader(ConcurrentArray array, Integer x) {
+  public Reader(ConcurrentSet array, Integer x) {
     super(array);
     this.x = x;
   }
