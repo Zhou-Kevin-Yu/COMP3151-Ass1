@@ -88,10 +88,14 @@ proctype search(int x) {
             R = M;
             temp = R;
             R = M;
-            wait(shift_locks[M])
-            signal(shift_locks[temp])
+            wait(shift_locks[M]);
+            signal(shift_locks[temp]); //if not rightmost
         ::  data[M] == x ->
-            signal(shift_locks[M])
+            signal(shift_locks[M]);
+            break;
+        fi;
+    od;
+}
         
 
 
