@@ -12,7 +12,7 @@ public class Reader extends ConcurrentSetOperator {
   @Override
   public void run() {
     System.out.println("Search: " + x);
-    boolean result = array.insert(x);
+    boolean result = array.member(x);
     System.out.println("Search: " + x + (result ? " found" : " not found"));
   }
   
