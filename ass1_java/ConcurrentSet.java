@@ -1,8 +1,11 @@
 package ass1_java;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -13,13 +16,13 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  */
 public class ConcurrentSet {
 
-  private Integer N;
+  private int N;
   private List<Integer> arr;
   private Semaphore capacity;
   private List<ReadWriteLock> locks;
   private List<Semaphore> insertion_mutex;
 
-  public ConcurrentSet(Integer N) {
+  public ConcurrentSet(int N) {
     this.N = N;
     arr = new ArrayList<>(N);
     capacity = new Semaphore(N, true);
@@ -28,61 +31,68 @@ public class ConcurrentSet {
 
     for (int i = 0; i < N; i++) {
       arr.add(-1);
-      locks.add(new ReentrantReadWriteLock(true));
-      insertion_mutex.add(new Semaphore(1, true));
+      locks.add(new ReentrantReadWriteLock());
+      insertion_mutex.add(new Semaphore(1));
     }
   }
 
-  private void shiftLeft(Integer index) {
+  private void shiftValue(int from, int to) {
 
-    locks.get(index).writeLock().lock();
-    locks.get(index - 1).writeLock().lock();
+    assert(0 <= from && from < N);
+    assert(0 <= to && to < N);
 
-    arr.set(index - 1, arr.get(index));
-    arr.set(index, -1);
+    Lock fromLock = locks.get(from).writeLock();
+    Lock toLock = locks.get(to).writeLock();
 
-    locks.get(index).writeLock().unlock();
-    locks.get(index - 1).writeLock().unlock();
+    while (true) {
+      fromLock.lock();
+      if (toLock.tryLock()) break;
+      fromLock.unlock();
+    }
+
+    arr.set(to, arr.get(from));
+    arr.set(from, -1);
+
+    fromLock.unlock();
+    toLock.unlock();
   }
 
-  private void shiftRight(Integer index) {
-
-    locks.get(index).writeLock().lock();
-    locks.get(index + 1).writeLock().lock();
-
-    arr.set(index + 1, arr.get(index));
-    arr.set(index, -1);
-
-    locks.get(index).writeLock().unlock();
-    locks.get(index + 1).writeLock().unlock();
+  private void shiftLeft(int index) {
+    shiftValue(index, index - 1);
   }
 
-  private void insertIndex(Integer index, Integer value) {
+  private void shiftRight(int index) {
+    shiftValue(index, index + 1);
+  }
 
-    locks.get(index).writeLock().lock();
+  private void insertIndex(int index, int value) {
 
+    Lock insertionLock = locks.get(index).writeLock();
+
+    insertionLock.lock();
     arr.set(index, value);
-
-    locks.get(index).writeLock().unlock();
+    insertionLock.unlock();
   }
 
-  private boolean deleteIndex(Integer index) {
+  private boolean deleteIndex(int index) {
 
-    locks.get(index).writeLock().lock();
+    Lock deletionLock = locks.get(index).writeLock();
+
+    deletionLock.lock();
 
     boolean successfulDeletion = arr.get(index) != -1;
     arr.set(index, -1);
 
-    locks.get(index).writeLock().unlock();
+    deletionLock.unlock();
 
     return successfulDeletion;
   }
 
-  private Integer readIndex(Integer index) {
+  private int readIndex(int index) {
 
     locks.get(index).readLock().lock();
 
-    Integer value = arr.get(index);
+    int value = arr.get(index);
 
     locks.get(index).readLock().unlock();
 
@@ -94,95 +104,123 @@ public class ConcurrentSet {
    * @param x - the number to search for
    * @return true if the number is found, false otherwise
    */
-  public boolean search(Integer x) {
+  public boolean member(int x) {
 
     // Perform the initial setup for the binary search
 
-    Integer L = 0;
-    Integer R = N - 1;
+    Set<Integer> activeLocks = new HashSet<>();
 
-    locks.get(L).readLock().lock();
-    locks.get(R).readLock().lock();
+    int L = 0;
+    int R = N - 1;
+    int M;
+
+    Lock LLock = locks.get(L).readLock();
+    Lock RLock = locks.get(R).readLock();
+    Lock MLock;
+    Lock MGuessLeftLock;
+    Lock MGuessRightLock;
+
+    int MValue;
+
+    LLock.lock();
+    RLock.lock();
 
     if (arr.get(L) == x || arr.get(R) == x) {
-      locks.get(L).readLock().unlock();
-      locks.get(R).readLock().unlock();
+      LLock.unlock();
+      RLock.unlock();
       return true;
     }
 
     while (true) {
 
+      // System.out.println("Searching for " + x + " L: " + L + ", R: " + R);
+
       // lock the middle element
-      Integer MGuessLeft = (L + R) / 2;
-      Integer MGuessRight = MGuessLeft + 1;
-      Integer M;
+      int MGuessLeft = (int)Math.floor((L + R) / 2);
+      int MGuessRight = MGuessLeft + 1;
+
+      MGuessLeftLock = locks.get(MGuessLeft).readLock();
+      MGuessRightLock = locks.get(MGuessRight).readLock();
 
       locks.get(MGuessLeft).readLock().lock();
       locks.get(MGuessRight).readLock().lock();
 
-      if (arr.get(MGuessLeft) != -1) {
-        M = MGuessLeft;
-      } else if (arr.get(MGuessRight) != -1) {
-        M = MGuessRight;
-      } else {
-        // search both directions until the number is found or the search space is exhausted
-        while (true) {
+      // search both directions until the number is found or the search space is exhausted
+      while (true) {
 
-          boolean canProgressLeft = MGuessLeft > L + 1;
-          boolean canProgressRight = MGuessRight < R - 1;
+        assert(L < R);
 
-          if (!canProgressLeft && !canProgressRight) {
-            // the number is not in [L, R]
-            locks.get(MGuessLeft).readLock().unlock();
-            locks.get(MGuessRight).readLock().unlock();
+        boolean endLeft = MGuessLeft == L;
+        boolean endRight = MGuessRight == R;
 
-            locks.get(L).readLock().unlock();
-            locks.get(R).readLock().unlock();
-            return false;
+        if (endLeft && endRight) {
+
+          locks.get(MGuessLeft).readLock().unlock();
+          locks.get(MGuessRight).readLock().unlock();
+          LLock.unlock();
+          RLock.unlock();
+          return false;
+        }
+        
+        // Move the pointer left
+        if (!endLeft) {
+          if (arr.get(MGuessLeft) != -1) {
+            M = MGuessLeft;
+            break;
           }
 
-          if (canProgressLeft) {
-            locks.get(MGuessLeft - 1).readLock().lock();
-            locks.get(MGuessLeft).readLock().unlock();
-            MGuessLeft--;
+          locks.get(MGuessLeft - 1).readLock().lock();
+          locks.get(MGuessLeft).readLock().unlock();
 
-            if (arr.get(MGuessLeft) != -1) {
-              M = MGuessLeft;
-              break;
-            }
+          MGuessLeft--;
+          
+        }
+
+        if (!endRight) {
+          if (arr.get(MGuessRight) != -1) {
+            M = MGuessRight;
+            break;
           }
 
-          if (canProgressRight) {
-            locks.get(MGuessRight).readLock().lock();
-            locks.get(MGuessRight + 1).readLock().unlock();
-            MGuessRight++;
-
-            if (arr.get(MGuessRight) != -1) {
-              M = MGuessRight;
-              break;
-            }
-          }
+          locks.get(MGuessRight + 1).readLock().lock();
+          locks.get(MGuessRight).readLock().unlock();
+          MGuessRight++;
         }
       }
 
       // We have identified a non-empty element at position M
-      Integer MValue = arr.get(M);
+      assert(M == MGuessLeft || M == MGuessRight);
+      assert(L < M);
+      assert(M < R);
+
+      MLock = locks.get(M).readLock();
+      MValue = arr.get(M);
+
+      MLock.lock();
+      locks.get(MGuessLeft).readLock().unlock();
+      locks.get(MGuessRight).readLock().unlock();
+
+      // We have identified a non-empty element at position M
 
       assert(MValue != -1);
 
       if (MValue == x) {
         // The number is found
-        locks.get(M).readLock().unlock();
-        locks.get(L).readLock().unlock();
-        locks.get(R).readLock().unlock();
+        MLock.unlock();
+        LLock.unlock();
+        RLock.unlock();
         return true;
       } else if (MValue < x) {
         // The number must be further to the right
-        locks.get(L).readLock().unlock();
+        LLock.unlock();
+
+        LLock = MLock;
         L = M;
       } else {
         // The number must be further to the left
-        locks.get(R).readLock().unlock();
+        RLock.unlock();
+
+        RLock = MLock;
         R = M;
       }
     }
@@ -193,17 +231,17 @@ public class ConcurrentSet {
    * @param x - the number to insert
    * @return true if the number is inserted, false otherwise
    */
-  public boolean insert(Integer x) {
+  public boolean insert(int x) {
 
     capacity.acquireUninterruptibly();
 
-    Integer L = -1;
-    Integer R = -1;
+    int L = -1;
+    int R = -1;
 
     while (true) {
       // get R + 1
 
-      Integer nextValue;
+      int nextValue;
 
       if (R == N - 1) {
         assert(L != -1);
@@ -213,16 +251,12 @@ public class ConcurrentSet {
         nextValue = arr.get(R + 1);
       }
 
-      if (R != -1 && R != L) {
-        insertion_mutex.get(R).release();
-      }
+      if (R != -1 && R != L) insertion_mutex.get(R).release();
 
       if (nextValue == -1) {
 
         // A new empty slot is found, release the mutexes and update it to the new space
-        if (L != -1) {
-          insertion_mutex.get(L).release();
-        }
+        if (L != -1) insertion_mutex.get(L).release();
         
         R = R + 1;
         L = R;
@@ -239,9 +273,7 @@ public class ConcurrentSet {
 
         // release the mutexes
         insertion_mutex.get(R + 1).release();
-        if (L != -1) {
-          insertion_mutex.get(L).release();
-        }
+        if (L != -1) insertion_mutex.get(L).release();
 
         return false;
 
@@ -261,9 +293,7 @@ public class ConcurrentSet {
           insertIndex(R, x);
 
           // release the mutexes
-          if (R != N - 1) {
-            insertion_mutex.get(R + 1).release();
-          }
+          if (R != N - 1) insertion_mutex.get(R + 1).release();
           insertion_mutex.get(L).release();
 
           return true;
@@ -271,23 +301,19 @@ public class ConcurrentSet {
         } else {
 
           // We don't have an empty slot reserved, search to the right for an empty slot
-          Integer k = 2;
+          int k = 2;
 
           while (true) {
 
             assert(R + k < N);
             insertion_mutex.get(R + k).acquireUninterruptibly();
-            if (k != 2) {
-              insertion_mutex.get(R + k - 1).release();
-            }
+            if (k != 2) insertion_mutex.get(R + k - 1).release();
             
             if (readIndex(R + k) == -1) {
 
               // An empty slot is found at R + k
               // shift all the numbers between R + 1 and R + k - 1 to the right in descending order
-              for (int i = R + k - 1; i >= R + 1; i--) {
-                shiftRight(i);
-              }
+              for (int i = R + k - 1; i >= R + 1; i--) shiftRight(i);
 
               // insert the number at R + 1
               insertIndex(R + 1, x);
@@ -299,6 +325,7 @@ public class ConcurrentSet {
 
               return true;
             }
+            k++;
           }
         }
       }
@@ -310,7 +337,7 @@ public class ConcurrentSet {
    * @param x - the number to delete
    * @return true if the number is deleted, false otherwise
    */
-  public boolean delete(Integer x) {
+  public boolean delete(int x) {
     return false;
   }
 
@@ -318,7 +345,7 @@ public class ConcurrentSet {
    * Prints the array in sorted order
    * @return true
    */
-  public void printSorted() {
+  public List<Integer> printSorted() {
 
     List<Integer> sorted = new ArrayList<Integer>();
 
@@ -326,12 +353,10 @@ public class ConcurrentSet {
 
       // acquire the next lock, then release the previous lock
       locks.get(i).readLock().lock();
-      if (i != 0) {
-        locks.get(i - 1).readLock().unlock();
-      }
+      if (i != 0) locks.get(i - 1).readLock().unlock();
 
       // read the next value and add it to the sorted list
-      Integer nextValue = arr.get(i);
+      int nextValue = arr.get(i);
 
       if (nextValue != -1) {
         sorted.add(nextValue);
@@ -343,6 +368,8 @@ public class ConcurrentSet {
     locks.get(N - 1).readLock().unlock();
 
     System.out.println(sorted);
+
+    return sorted;
 
   }
 }
