@@ -1,32 +1,36 @@
-#define CAPCITY 10
+#include "critical2.h"
+
+#define CAPACITY 10
 #define READ_LOCK 1
 #define WRITE_LOCK 2
 #define UNLOCKED 0
 
+inline signal(s)  {s++;}
+inline wait(s)  {atomic{s > 0; s++}}
+
+inline unlock(s)  {locks[s] = UNLOCKED}
+inline write_lock(s)  {atomic{locks[s] == UNLOCKED; locks[s] = WRITE_LOCK}} //free to read
+inline read_lock(s)  {atomic{locks[s] == UNLOCKED; locks[s] = READ_LOCK}} //cant read nor write
+
 byte locks[CAPACITY];
-byte data[10];
-
-byte capacity_sem = CAPACITY;
-
-inline signal(s) = {s++;}
-inline wait(s) = {atomic{s > 0; s++}}
-inline unlock(s) = {locks[s] = UNLOCKED}
-inline write_lock(s) = {atomic{locks[s] == UNLOCKED; locks[s] = WRITE_LOCK}}
-unline read_lock(s) = {atomic{locks[s] == UNLOCKED; locks[s] = READ_LOCK}}
-
+byte data[CAPACITY];
+byte capacity_s = CAPACITY;
+byte insert_mutex = 1;
 
 proctype insert(int x) {
     do
-    ::  wait(capacity);
+    ::  skip;
+    ::  wait(insert_mutex);
+        wait(capacity_s);
         byte i = 0;
         byte L = -1;
         byte R = -1;
         do
         ::  write_lock(i);
-            unlock(i - 1); //if not leftmost
+            unlock(i - 1); //if not leftmosts
             if
             ::  data[i] == x ->
-                signal(capacity);
+                signal(capacity_s);
                 unlock(i);
                 break;
             ::  data[i] < 0 ->
@@ -35,7 +39,7 @@ proctype insert(int x) {
             ::  data[i] > x ->
                 if
                 ::  L > -1 ->
-                    write(L, i); //shift and insert
+                    critical_section(L, i);
                     unlock(L);
                     unlock(i);
                     break;
@@ -50,7 +54,7 @@ proctype insert(int x) {
                             i++;
                         ::  else ->
                             unlock(i - 1) //if i - 1 not R
-                            write(R, i);
+                            critical_section(i, R);
                             unlock(R);
                             unlock(i);
                         fi;
@@ -58,64 +62,85 @@ proctype insert(int x) {
                 fi;
             fi;
         od;
+        signal(insert_mutex);
     od;
 };
 
-proctype search(int x) {
-    L = 0;
-    R = CAPACITY - 1;
-    M = L + R / 2
+proctype member(int x) {
+    byte L = 0;
+    byte R = CAPACITY - 1;
+    byte M = L + R / 2
+    byte temp;
     do
-    write_lock(M)
-    ::  if
+    ::  write_lock(M);
+        if
         ::  data[M] < x ->
             temp = L;
             L = M;
-            M = L + R / 2
-            write_lock(M)
+            M = L + R / 2;
+            write_lock(M);
             unlock(temp);
         ::  data[M] > x ->
-            R = M;
             temp = R;
             R = M;
+            M = L + R / 2;
             write_lock(M)
             unlock(temp);
         ::  data[M] == x ->
+            printf("%d does exist\n", x);
+            break;
+        ::  data[M] == L && data[M] == R && data[M] != x -> //all values locked
+            printf("%d does not exist\n", x);
             break;
         fi;
+        unlock(M);
+        unlock(L);
+        unlock(R);
     od;
 }
-
-proctype member(int x) {
-    do
-    ::  i = search(x);
-        if
-        ::  data[i] == x ->
-            printf("%d exists", x);
-            unlock(i)
-        :: data[i] != x ->
-            printf("%d does not exist", x);
-            unlock(i)
-        fi;
-    od;
-};
 
 proctype delete(int x) {
+    byte L = 0;
+    byte R = CAPACITY - 1;
+    byte M = L + R / 2
+    byte temp;
     do
-    ::  
-        i = search(i);
-        delete_cs(i);
+    ::  write_lock(M);
+        if
+        ::  data[M] < x ->
+            temp = L;
+            L = M;
+            M = L + R / 2;
+            write_lock(M);
+            unlock(temp);
+        ::  data[M] > x ->
+            temp = R;
+            R = M;
+            M = L + R / 2;
+            write_lock(M)
+            unlock(temp);
+        ::  data[M] == x ->
+            //delete value
+            break;
+        ::  data[M] == L && data[M] == R && data[M] != x -> //all values locked
+            //value doesnt exist
+            break;
+        fi;
+        unlock(M);
+        unlock(L);
+        unlock(R);
     od;
 }
 
-proctype print_sorted() {
+proctype print_sorted(int x) {
+    byte i = 0;
     do
-    ::  i = 0;
+    ::
         do
         ::  if 
             ::  i < CAPACITY ->
                 locks[i] <= READ_LOCK;
-                print(data[i]);
+                printf("%d", data[i]);
                 i++;
             ::  else ->
                 break;
@@ -127,7 +152,7 @@ proctype print_sorted() {
 init {
     byte i = 0;
     do
-    ::  shift_locks[i] = 1;
+    ::  locks[i] = UNLOCKED;
         i++;
         if
         ::  i == CAPACITY ->
@@ -135,8 +160,20 @@ init {
         :: else ->
             skip;
         fi;
-    od
-    run insert(); run delete(); run member(); run print_sorted();
-    run insert(); run delete(); run member(); run print_sorted();
+    od;
+    i = 0;
+    do 
+    ::  if
+        ::  i != CAPACITY ->
+            run insert(i); run delete(i); run member(i); run print_sorted(i);
+            run insert(i); run delete(i); run member(i); run print_sorted(i);
+            i++;
+        ::  else ->
+            break;
+        fi;
+    od;
 }
 
+
+//no two inserts,
+//no two
