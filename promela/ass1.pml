@@ -1,143 +1,143 @@
-#include "operations.h"
+#include "header.h"
 
-#define CAPACITY 10
-
-#define semaphore byte
-
-inline signal(s) {s++;}
-inline wait(s) {atomic{s > 0; s--}}
-
-
-byte data[CAPACITY];
-semaphore capacity = CAPACITY;
-
-proctype insert(int x) {
+proctype insert() {
+    wait(capacity_s);
+    byte i = 0;
+    int L = -1;
+    int R = -1;
     do
-    ::  wait(capacity);
-        byte i = 0;
-        byte L = -1;
-        byte R = -1;
+    ::  write_lock(i);
         do
-        ::  wait(shift_locks[i]);
-            signal(shift_locks[i - 1]) //if not first element
-            if
-            ::  data[i] == x ->
-                signal(capacity);
-                signal(shift_locks[i])
+        ::  signal(capacity_s); //case where element is found to already exist
+            unlock(i);
+            goto end;
+        ::  unlock(L); //case current is pointed at empty block
+            L = i;
+        ::  if
+            ::  L > -1 -> //case where current is greater and there exists an empty block behind
+                unlock(L);
+                unlock(i);
+                printf("insert element into %d", i);
                 break;
-            ::  data[i] < x ->
-                signal(shift_locks[L])
-                L = i;
-            ::  data[i] > x ->
-                if
-                ::  L > -1 ->
-                    shift_left(i - 1);
-                    //Atomic recursive function that calls shift_left on the left element, waits on current element
-                    //Base case: returns true if called on empty element, false if called on the leftmost element - should never return false
-                    //recursive case: if recursive shift_left call returns true, set left element to current element, then empty current element
-                    //blocks if element is locked
-                    data[i - 1] = x;
-                    signal(shift_locks[L]);
-                    signal(shift_locks[i]);
-                    break;
-                    :: else ->
-                    R = i;
+            ::  L < 0 -> //case where current is greater and there does not exist an empty block behind
+                R = i;
+                i++;
+                do
+                ::  write_lock(i) //case where current is empty
+                    //do stuff between R and i
+                    unlock(R)
+                    unlock(i)
+                ::  write_lock(i) //case where filled
                     i++;
-                    do
-                    ::  wait(shift_locks[i]);
-                        if
-                        ::  data[i] > -1 ->
-                            wait(shift_locks[i + 1]);
-                            signal(shift_locks[i]);
-                            i++;
-                        ::  else ->
-                            wait(shift_locks[i + 1])
-                            signal(shift_locks[i])
-                            shift_right(R)
-                        fi;
-                    od;
-                fi;
+                    unlock(i)
+                od;
             fi;
         od;
     od;
-};
+    end:
+}
 
-
-
-proctype delete(int x) {
-    do:
-    ::  data[search(x)] = -1;
+proctype member() {
+    byte L = 0;
+    byte R = CAPACITY - 1;
+    byte M;
+    lock_random_between_bound(L, R, M);
+    write_lock(M);
+    write_lock(L);
+    write_lock(R);
+    byte temp;
+    do
+    ::  temp = L; //case where M is less than target
+        L = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  temp = R; //case where M is greater than target
+        R = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  printf("%element exists\n"); //case where M is equal to target
+        break;
     od;
-};
+    unlock(M);
+    unlock(L);
+    unlock(R);
+}
 
+proctype delete() {
+    byte L = 0;
+    byte R = CAPACITY - 1;
+    byte M;
+    lock_random_between_bound(L, R, M);
+    write_lock(M);
+    write_lock(L);
+    write_lock(R);
+    byte temp;
+    do
+    ::  temp = L; //case where M is less than target
+        L = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  temp = R; //case where M is greater than target
+        R = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  printf("%element exists, deleted\n"); //case where M is equal to target
+        break;
+    od;
+    unlock(M);
+    unlock(L);
+    unlock(R);
+    signal(capacity_s)
+}
 
-proctype search(int x) {
-    L = 0;
-    R = CAPACITY - 1;
-    M = L + R / 2
-    do:
-    wait(shift_locks[M])
-    ::  if
-        ::  data[M] < x ->
-            temp = L;
-            L = M;
-            M = L + R / 2
-            wait(shift_locks[M]);
-            signal(shift_locks[temp]); //if not leftmost
-        ::  data[M] > x ->
-            R = M;
-            temp = R;
-            R = M;
-            wait(shift_locks[M]);
-            signal(shift_locks[temp]); //if not rightmost
-        ::  data[M] == x ->
-            signal(shift_locks[M]);
+proctype print_sorted() {
+    byte i = 0;
+    do
+    ::  if 
+        ::  i < CAPACITY ->
+            locks[i] <= READ_LOCK;
+            printf("printed element %d", i);
+            i++;
+        ::  else ->
             break;
         fi;
     od;
 }
-        
-
-
-
-};
-
-proctype member() {
-
-};
-
-proctype print_sorted() {
-    do:
-    ::  i = 0;
-        do:
-        ::  if 
-            ::  i < CAPACITY ->
-                wait(shift_locks[i]);
-                print(data[i]);
-                wait(shift_locks[i + 1]);
-                signal(shift_locks[i]);
-                i++;
-            ::  else ->
-                signal(shift_locks[i])
-                break;
-            fi;
-        od;
-    od;
-};
 
 init {
     byte i = 0;
     do
-    ::  semaphore shift_locks[CAPACITY];
-        shift_locks[i] = 1;
-        i++;
-        if
+    ::  if
         ::  i == CAPACITY ->
             break;
         :: else ->
-            skip;
+            locks[i] = UNLOCKED;
+            i++;
         fi;
-    od
-    run insert(); run delete(); run member(); run print_sorted();
+    od;
     run insert(); run delete(); run member(); run print_sorted();
 }
+
+
+//no two inserts,
+//no two
