@@ -1,177 +1,141 @@
-#include "critical2.h"
+#include "header.h"
 
-#define CAPACITY 10
-#define READ_LOCK 1
-#define WRITE_LOCK 2
-#define UNLOCKED 0
-
-inline signal(s)  {s++;}
-inline wait(s)  {atomic{s > 0; s++}}
-
-inline unlock(s)  {locks[s] = UNLOCKED}
-inline write_lock(s)  {atomic{locks[s] == UNLOCKED; locks[s] = WRITE_LOCK}} //free to read
-inline read_lock(s)  {atomic{locks[s] == UNLOCKED; locks[s] = READ_LOCK}} //cant read nor write
-
-byte locks[CAPACITY];
-byte data[CAPACITY];
-byte capacity_s = CAPACITY;
-byte insert_mutex = 1;
-
-proctype insert(int x) {
+proctype insert() {
+    wait(capacity_s);
+    byte i = 0;
+    int L = -1;
+    int R = -1;
     do
-    ::  skip;
-    ::  wait(insert_mutex);
-        wait(capacity_s);
-        byte i = 0;
-        byte L = -1;
-        byte R = -1;
+    ::  write_lock(i);
         do
-        ::  write_lock(i);
-            unlock(i - 1); //if not leftmosts
-            if
-            ::  data[i] == x ->
-                signal(capacity_s);
-                unlock(i);
-                break;
-            ::  data[i] < 0 ->
+        ::  signal(capacity_s); //case where element is found to already exist
+            unlock(i);
+            goto end;
+        ::  unlock(L); //case current is pointed at empty block
+            L = i;
+        ::  if
+            ::  L > -1 -> //case where current is greater and there exists an empty block behind
                 unlock(L);
-                L = i;
-            ::  data[i] > x ->
-                if
-                ::  L > -1 ->
-                    critical_section(L, i);
-                    unlock(L);
-                    unlock(i);
-                    break;
-                :: else ->
-                    R = i; 
+                unlock(i);
+                printf("insert element into %d", i);
+                break;
+            ::  L < 0 -> //case where current is greater and there does not exist an empty block behind
+                R = i;
+                i++;
+                do
+                ::  write_lock(i) //case where current is empty
+                    //do stuff between R and i
+                    unlock(R)
+                    unlock(i)
+                ::  write_lock(i) //case where filled
                     i++;
-                    do
-                    ::  write_lock(i)
-                        if
-                        ::  data[i] > -1 ->
-                            unlock(i - 1); //if i - 1 not R
-                            i++;
-                        ::  else ->
-                            unlock(i - 1) //if i - 1 not R
-                            critical_section(i, R);
-                            unlock(R);
-                            unlock(i);
-                        fi;
-                    od;
-                fi;
+                    unlock(i)
+                od;
             fi;
         od;
-        signal(insert_mutex);
     od;
-};
-
-proctype member(int x) {
-    byte L = 0;
-    byte R = CAPACITY - 1;
-    byte M = L + R / 2
-    byte temp;
-    do
-    ::  write_lock(M);
-        if
-        ::  data[M] < x ->
-            temp = L;
-            L = M;
-            M = L + R / 2;
-            write_lock(M);
-            unlock(temp);
-        ::  data[M] > x ->
-            temp = R;
-            R = M;
-            M = L + R / 2;
-            write_lock(M)
-            unlock(temp);
-        ::  data[M] == x ->
-            printf("%d does exist\n", x);
-            break;
-        ::  data[M] == L && data[M] == R && data[M] != x -> //all values locked
-            printf("%d does not exist\n", x);
-            break;
-        fi;
-        unlock(M);
-        unlock(L);
-        unlock(R);
-    od;
+    end:
 }
 
-proctype delete(int x) {
+proctype member() {
     byte L = 0;
     byte R = CAPACITY - 1;
-    byte M = L + R / 2
+    byte M;
+    lock_random_between_bound(L, R, M);
+    write_lock(M);
+    write_lock(L);
+    write_lock(R);
     byte temp;
     do
-    ::  write_lock(M);
+    ::  temp = L; //case where M is less than target
+        L = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
         if
-        ::  data[M] < x ->
-            temp = L;
-            L = M;
-            M = L + R / 2;
-            write_lock(M);
-            unlock(temp);
-        ::  data[M] > x ->
-            temp = R;
-            R = M;
-            M = L + R / 2;
-            write_lock(M)
-            unlock(temp);
-        ::  data[M] == x ->
-            //delete value
-            break;
-        ::  data[M] == L && data[M] == R && data[M] != x -> //all values locked
-            //value doesnt exist
+        ::  L == R ->
+            printf("%d does not exist\n");
             break;
         fi;
-        unlock(M);
-        unlock(L);
-        unlock(R);
+    ::  temp = R; //case where M is greater than target
+        R = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  printf("%element exists\n"); //case where M is equal to target
+        break;
     od;
+    unlock(M);
+    unlock(L);
+    unlock(R);
 }
 
-proctype print_sorted(int x) {
+proctype delete() {
+    byte L = 0;
+    byte R = CAPACITY - 1;
+    byte M;
+    lock_random_between_bound(L, R, M);
+    write_lock(M);
+    write_lock(L);
+    write_lock(R);
+    byte temp;
+    do
+    ::  temp = L; //case where M is less than target
+        L = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  temp = R; //case where M is greater than target
+        R = M;
+        lock_random_between_bound(L, R, M);
+        unlock(temp);
+        if
+        ::  L == R ->
+            printf("%d does not exist\n");
+            break;
+        fi;
+    ::  printf("%element exists, deleted\n"); //case where M is equal to target
+        break;
+    od;
+    unlock(M);
+    unlock(L);
+    unlock(R);
+    signal(capacity_s)
+}
+
+proctype print_sorted() {
     byte i = 0;
     do
-    ::
-        do
-        ::  if 
-            ::  i < CAPACITY ->
-                locks[i] <= READ_LOCK;
-                printf("%d", data[i]);
-                i++;
-            ::  else ->
-                break;
-            fi;
-        od;
+    ::  if 
+        ::  i < CAPACITY ->
+            locks[i] <= READ_LOCK;
+            printf("printed element %d", i);
+            i++;
+        ::  else ->
+            break;
+        fi;
     od;
 }
 
 init {
     byte i = 0;
     do
-    ::  locks[i] = UNLOCKED;
-        i++;
-        if
+    ::  if
         ::  i == CAPACITY ->
             break;
         :: else ->
-            skip;
-        fi;
-    od;
-    i = 0;
-    do 
-    ::  if
-        ::  i != CAPACITY ->
-            run insert(i); run delete(i); run member(i); run print_sorted(i);
-            run insert(i); run delete(i); run member(i); run print_sorted(i);
+            locks[i] = UNLOCKED;
             i++;
-        ::  else ->
-            break;
         fi;
     od;
+    run insert(); run delete(); run member(); run print_sorted();
 }
 
 
