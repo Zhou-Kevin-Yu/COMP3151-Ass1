@@ -31,8 +31,8 @@ public class ConcurrentSet {
 
     for (int i = 0; i < N; i++) {
       arr.add(-1);
-      locks.add(new ReentrantReadWriteLock());
-      insertion_mutex.add(new Semaphore(1));
+      locks.add(new ReentrantReadWriteLock(true));
+      insertion_mutex.add(new Semaphore(1, true));
     }
   }
 
@@ -108,8 +108,6 @@ public class ConcurrentSet {
 
     // Perform the initial setup for the binary search
 
-    Set<Integer> activeLocks = new HashSet<>();
-
     int L = 0;
     int R = N - 1;
     int M;
@@ -117,8 +115,6 @@ public class ConcurrentSet {
     Lock LLock = locks.get(L).readLock();
     Lock RLock = locks.get(R).readLock();
     Lock MLock;
-    Lock MGuessLeftLock;
-    Lock MGuessRightLock;
 
     int MValue;
 
@@ -138,9 +134,6 @@ public class ConcurrentSet {
       // lock the middle element
       int MGuessLeft = (int)Math.floor((L + R) / 2);
       int MGuessRight = MGuessLeft + 1;
-
-      MGuessLeftLock = locks.get(MGuessLeft).readLock();
-      MGuessRightLock = locks.get(MGuessRight).readLock();
 
       locks.get(MGuessLeft).readLock().lock();
       locks.get(MGuessRight).readLock().lock();
@@ -285,9 +278,7 @@ public class ConcurrentSet {
           
           // We have an empty slot reserved at L
           // shift all the numbers between L + 1 and R to the left in ascending order
-          for (int i = L + 1; i <= R; i++) {
-            shiftLeft(i);
-          }
+          for (int i = L + 1; i <= R; i++) shiftLeft(i);
 
           // insert the number at R
           insertIndex(R, x);
