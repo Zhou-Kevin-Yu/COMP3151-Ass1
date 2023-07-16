@@ -1,9 +1,7 @@
 package ass1_java;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -20,19 +18,22 @@ public class ConcurrentSet {
   private List<Integer> arr;
   private Semaphore capacity;
   private List<ReadWriteLock> locks;
-  private List<Semaphore> insertion_mutex;
+  private List<Semaphore> insertionMutex;
+  private List<Semaphore> deletionMutex;
 
   public ConcurrentSet(int N) {
     this.N = N;
     arr = new ArrayList<>(N);
     capacity = new Semaphore(N, true);
     locks = new ArrayList<>(N);
-    insertion_mutex = new ArrayList<>(N);
+    insertionMutex = new ArrayList<>(N);
+    deletionMutex = new ArrayList<>(N);
 
     for (int i = 0; i < N; i++) {
       arr.add(-1);
       locks.add(new ReentrantReadWriteLock(true));
-      insertion_mutex.add(new Semaphore(1, true));
+      insertionMutex.add(new Semaphore(1, true));
+      deletionMutex.add(new Semaphore(1, true));
     }
   }
 
@@ -72,20 +73,6 @@ public class ConcurrentSet {
     insertionLock.lock();
     arr.set(index, value);
     insertionLock.unlock();
-  }
-
-  private boolean deleteIndex(int index) {
-
-    Lock deletionLock = locks.get(index).writeLock();
-
-    deletionLock.lock();
-
-    boolean successfulDeletion = arr.get(index) != -1;
-    arr.set(index, -1);
-
-    deletionLock.unlock();
-
-    return successfulDeletion;
   }
 
   private int readIndex(int index) {
@@ -240,16 +227,16 @@ public class ConcurrentSet {
         assert(L != -1);
         nextValue = Integer.MAX_VALUE; // forces left insertion
       } else {
-        insertion_mutex.get(R + 1).acquireUninterruptibly();
+        insertionMutex.get(R + 1).acquireUninterruptibly();
         nextValue = arr.get(R + 1);
       }
 
-      if (R != -1 && R != L) insertion_mutex.get(R).release();
+      if (R != -1 && R != L) insertionMutex.get(R).release();
 
       if (nextValue == -1) {
 
         // A new empty slot is found, release the mutexes and update it to the new space
-        if (L != -1) insertion_mutex.get(L).release();
+        if (L != -1) insertionMutex.get(L).release();
         
         R = R + 1;
         L = R;
@@ -265,8 +252,8 @@ public class ConcurrentSet {
         capacity.release();
 
         // release the mutexes
-        insertion_mutex.get(R + 1).release();
-        if (L != -1) insertion_mutex.get(L).release();
+        insertionMutex.get(R + 1).release();
+        if (L != -1) insertionMutex.get(L).release();
 
         return false;
 
@@ -284,8 +271,8 @@ public class ConcurrentSet {
           insertIndex(R, x);
 
           // release the mutexes
-          if (R != N - 1) insertion_mutex.get(R + 1).release();
-          insertion_mutex.get(L).release();
+          if (R != N - 1) insertionMutex.get(R + 1).release();
+          insertionMutex.get(L).release();
 
           return true;
 
@@ -297,8 +284,8 @@ public class ConcurrentSet {
           while (true) {
 
             assert(R + k < N);
-            insertion_mutex.get(R + k).acquireUninterruptibly();
-            if (k != 2) insertion_mutex.get(R + k - 1).release();
+            insertionMutex.get(R + k).acquireUninterruptibly();
+            if (k != 2) insertionMutex.get(R + k - 1).release();
             
             if (readIndex(R + k) == -1) {
 
@@ -311,8 +298,8 @@ public class ConcurrentSet {
 
               // release the mutexes
 
-              insertion_mutex.get(R + k).release();
-              insertion_mutex.get(R + 1).release();
+              insertionMutex.get(R + k).release();
+              insertionMutex.get(R + 1).release();
 
               return true;
             }
@@ -323,13 +310,175 @@ public class ConcurrentSet {
     }
   }
 
+  // Assumes that the mutex for the index is read locked
+  public boolean deleteIndexWithMutex(int indexToDelete) {
+
+    assert(0 <= indexToDelete && indexToDelete < N);
+    
+    // Pre protocol -> promote the read lock to a write lock
+    if (indexToDelete != 0) deletionMutex.get(indexToDelete - 1).acquireUninterruptibly();
+    deletionMutex.get(indexToDelete).acquireUninterruptibly();
+    if (indexToDelete != N - 1) deletionMutex.get(indexToDelete + 1).acquireUninterruptibly();
+
+    if (indexToDelete != 0) locks.get(indexToDelete - 1).readLock().lock();
+    if (indexToDelete != N - 1) locks.get(indexToDelete + 1).readLock().lock();
+
+    locks.get(indexToDelete).readLock().unlock();
+    locks.get(indexToDelete).writeLock().lock();
+
+    if (indexToDelete != 0) locks.get(indexToDelete - 1).readLock().unlock();
+    if (indexToDelete != N - 1) locks.get(indexToDelete + 1).readLock().unlock();
+
+    // Critical section -> delete the number
+
+    boolean successfulDeletion = arr.get(indexToDelete) != -1;
+    arr.set(indexToDelete, -1);
+
+    locks.get(indexToDelete).writeLock().unlock();
+
+    // Post protocol -> release the mutexes
+
+    if (indexToDelete != 0) deletionMutex.get(indexToDelete - 1).release();
+    deletionMutex.get(indexToDelete).release();
+    if (indexToDelete != N - 1)  deletionMutex.get(indexToDelete + 1).release();
+
+    return successfulDeletion;
+  }
+
   /**
    * Deletes a number from the array
    * @param x - the number to delete
    * @return true if the number is deleted, false otherwise
    */
   public boolean delete(int x) {
-    return false;
+    // Perform the initial setup for the binary search
+
+    int L = 0;
+    int R = N - 1;
+    int M;
+
+    Lock LLock = locks.get(L).readLock();
+    Lock RLock = locks.get(R).readLock();
+    Lock MLock;
+
+    int MValue;
+
+    LLock.lock();
+    RLock.lock();
+
+    if (arr.get(L) == x) {
+      RLock.unlock();
+
+      boolean successfulDeletion = deleteIndexWithMutex(L);
+      if (successfulDeletion) capacity.release();
+
+      return successfulDeletion;
+    }
+
+    if (arr.get(R) == x) {
+      LLock.unlock();
+
+      boolean successfulDeletion = deleteIndexWithMutex(R);
+      if (successfulDeletion) capacity.release();
+
+      return successfulDeletion;
+    }
+
+    while (true) {
+
+      // System.out.println("Searching for " + x + " L: " + L + ", R: " + R);
+
+      // lock the middle element
+      int MGuessLeft = (int)Math.floor((L + R) / 2);
+      int MGuessRight = MGuessLeft + 1;
+
+      locks.get(MGuessLeft).readLock().lock();
+      locks.get(MGuessRight).readLock().lock();
+
+      // search both directions until the number is found or the search space is exhausted
+      while (true) {
+
+        assert(L < R);
+
+        boolean endLeft = MGuessLeft == L;
+        boolean endRight = MGuessRight == R;
+
+        if (endLeft && endRight) {
+
+          locks.get(MGuessLeft).readLock().unlock();
+          locks.get(MGuessRight).readLock().unlock();
+          LLock.unlock();
+          RLock.unlock();
+
+          // no deletion performed, do not release the capacity
+          return false;
+        }
+        
+        // Move the pointer left
+        if (!endLeft) {
+          if (arr.get(MGuessLeft) != -1) {
+            M = MGuessLeft;
+            break;
+          }
+
+          locks.get(MGuessLeft - 1).readLock().lock();
+          locks.get(MGuessLeft).readLock().unlock();
+
+          MGuessLeft--;
+          
+        }
+
+        if (!endRight) {
+          if (arr.get(MGuessRight) != -1) {
+            M = MGuessRight;
+            break;
+          }
+
+          locks.get(MGuessRight + 1).readLock().lock();
+          locks.get(MGuessRight).readLock().unlock();
+          MGuessRight++;
+        }
+      }
+
+      // We have identified a non-empty element at position M
+      assert(M == MGuessLeft || M == MGuessRight);
+      assert(L < M);
+      assert(M < R);
+
+      MLock = locks.get(M).readLock();
+      MValue = arr.get(M);
+
+      MLock.lock();
+      locks.get(MGuessLeft).readLock().unlock();
+      locks.get(MGuessRight).readLock().unlock();
+
+      // We have identified a non-empty element at position M
+
+      assert(MValue != -1);
+
+      if (MValue == x) {
+        // The number is found
+        LLock.unlock();
+        RLock.unlock();
+
+        boolean successfulDeletion = deleteIndexWithMutex(M);
+        if (successfulDeletion) capacity.release();
+
+        return successfulDeletion;
+      } else if (MValue < x) {
+        // The number must be further to the right
+        LLock.unlock();
+
+        LLock = MLock;
+        L = M;
+      } else {
+        // The number must be further to the left
+        RLock.unlock();
+
+        RLock = MLock;
+        R = M;
+      }
+    }
   }
 
   /**
@@ -340,6 +489,8 @@ public class ConcurrentSet {
 
     List<Integer> sorted = new ArrayList<Integer>();
 
+    int lastValue = -1;
+
     for (int i = 0; i < N; i++) {
 
       // acquire the next lock, then release the previous lock
@@ -349,8 +500,9 @@ public class ConcurrentSet {
       // read the next value and add it to the sorted list
       int nextValue = arr.get(i);
 
-      if (nextValue != -1) {
+      if (nextValue != -1 && nextValue > lastValue) {
         sorted.add(nextValue);
+        lastValue = nextValue;
       }
 
     }
